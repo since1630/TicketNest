@@ -56,18 +56,28 @@ export class BookingService {
   }
 
   async createBooking(goodsId: number, userId: number) {
+    let status;
     const lockResource = [`goodsId:${goodsId}:lock`]; // 락을 식별하는 고유 문자열
     const lock = await this.redlock.acquire(lockResource, 2000); // 2초 뒤에 자동 잠금해제
-    let status;
+
+    const cachedBookingLimit = await this.getBookingLimitCount(goodsId); // 해당 goodsId의 bookingLimit을 레디스로부터 캐시해옴.
     try {
-      const bookingData = await this.goodsRepository.findOne({
-        where: { id: goodsId },
-        select: { bookingLimit: true },
-      });
+      let bookingData;
+
+      // 캐시된게 없다면 DB에서 bookingLimit을 가져옴
+      if (!cachedBookingLimit) {
+        bookingData = await this.goodsRepository.findOne({
+          where: { id: goodsId },
+          select: { bookingLimit: true },
+        });
+      }
       const bookingLimit = bookingData.bookingLimit; // 예약 한도(postgreSQL)
+      await this.setBookingLimitCount(goodsId, bookingLimit); // DB에서 가져온 bookingLimit을 레디스에 저장
       const bookingCount = await this.getBookingCount(goodsId); // 예약 총 갯수(레디스로부터)
+
       console.log('bookingCount:', bookingCount);
       console.log('bookingLimit:', bookingLimit);
+
       if (bookingCount < bookingLimit) {
         // 레디스에서 예약 수를 증가시킴.
         await this.redisClient.incr(`goodsId:${goodsId}`);
@@ -92,6 +102,23 @@ export class BookingService {
   async getBookingCount(goodsId: number): Promise<number> {
     const count = await this.redisClient.get(`goodsId:${goodsId}`);
     return +count;
+  }
+
+  // 레디스에서 해당 goodsId 의 bookingLimit 가져오기
+  async getBookingLimitCount(goodsId: number): Promise<number> {
+    const count = await this.redisClient.get(
+      `bookingLimitOfGoodsId:${goodsId}`,
+    );
+    return +count;
+  }
+
+  // 레디스로 해당 goodsId 의 bookingLimit 저장하기
+  async setBookingLimitCount(goodsId, bookingLimit: number): Promise<void> {
+    await this.redisClient.set(
+      `bookingLimitOfGoodsId:${goodsId}`,
+      bookingLimit,
+    );
+    // return isCount;
   }
 
   async deleteBooking(goodsId: number, userId: number) {
