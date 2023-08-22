@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -7,27 +8,53 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { BookingEntity } from './entity/booking.entity';
 import { Repository } from 'typeorm';
 import { GoodsEntity } from '../goods/entities/goods.entity';
+import Redis from 'ioredis';
 
 @Injectable()
 export class BookingService {
+  private readonly redisClient: Redis;
   constructor(
     @InjectRepository(BookingEntity)
     private bookingRepository: Repository<BookingEntity>,
     @InjectRepository(GoodsEntity)
     private goodsRepository: Repository<GoodsEntity>,
-  ) {}
+    @Inject('REDIS_CLIENT') redisClient: Redis,
+  ) {
+    this.redisClient = redisClient;
+  }
+
   async createBooking(goodsId: number, userId: number) {
     // 1. goods에 예약되어 있는 Count 수 확인
-    const count: number = await this.bookingRepository.countBy({ goodsId });
+    const cachedAccCount = await this.redisClient.get(`goodsId:${goodsId}`);
+    let accCount: number;
+    if (!cachedAccCount) {
+      accCount = await this.bookingRepository.countBy({
+        goodsId,
+      }); // count를 레디스에 저장.
+    } else {
+      accCount = +cachedAccCount;
+    }
 
     // 2. goods의 limit 확인
-    const findLimit = await this.goodsRepository.findOne({
-      where: { id: goodsId },
-      select: { bookingLimit: true },
-    });
-
-    // 3. Count의 갯수가 bookingLimit보다 많을 경우
-    if (count >= findLimit.bookingLimit)
+    const cachedBookingLimit = await this.redisClient.get(
+      `bookingLimitOfGoodsId:${goodsId}`,
+    );
+    let bookingLimit: number;
+    if (!cachedBookingLimit) {
+      const findLimit = await this.goodsRepository.findOne({
+        where: { id: goodsId },
+        select: { bookingLimit: true },
+      });
+      await this.redisClient.set(
+        `bookingLimitOfGoodsId:${goodsId}`,
+        findLimit.bookingLimit,
+      );
+      // 3. Count의 갯수가 bookingLimit보다 많을 경우
+      bookingLimit = findLimit.bookingLimit;
+    } else {
+      bookingLimit = +cachedBookingLimit;
+    }
+    if (accCount > bookingLimit)
       throw new ConflictException({
         errorMessage: '남은 좌석이 없습니다.',
       });
@@ -41,6 +68,7 @@ export class BookingService {
       goodsId,
       userId,
     });
+    await this.redisClient.incr(`goodsId:${goodsId}`);
 
     // 5. 성공한 경우 Success:true
     return { Success: true };

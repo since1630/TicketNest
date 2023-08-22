@@ -21,10 +21,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest: (req) => {
         // ExtractJwt.fromAuthHeaderAsBearerToken() 이 어떤 이유인지 아직 모르겠으나 토큰 추출을 못함.
         // let token = null;
-        if (req.body.headers) {
-          const [tokenType, token] = (
-            req.body.headers['Authorization'] ?? ''
-          ).split(' ');
+        if (req.headers) {
+          const [tokenType, token] = (req.headers['authorization'] ?? '').split(
+            ' ',
+          );
           if (tokenType !== 'Bearer' || !token) {
             throw new UnauthorizedException('토큰이 유효하지 않습니다');
             // ? req.body.headers['Authorization'].split(' ')[1]
