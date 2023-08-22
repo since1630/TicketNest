@@ -2,48 +2,96 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { BookingEntity } from './entity/booking.entity';
 import { Repository } from 'typeorm';
 import { GoodsEntity } from '../goods/entities/goods.entity';
+import * as Redlock from 'redlock';
+import { Redis } from 'ioredis';
+import subRedis from 'ioredis';
 
 @Injectable()
 export class BookingService {
+  private redisClient: Redis;
+  private subscriber: Redis;
+  private redlock: Redlock;
+
   constructor(
+    @Inject('REDIS_CLIENT') redisClient: Redis,
     @InjectRepository(BookingEntity)
     private bookingRepository: Repository<BookingEntity>,
     @InjectRepository(GoodsEntity)
     private goodsRepository: Repository<GoodsEntity>,
-  ) {}
-  async createBooking(goodsId: number, userId: number) {
-    // 1. goods에 예약되어 있는 Count 수 확인
-    const count: number = await this.bookingRepository.countBy({ goodsId });
-
-    // 2. goods의 limit 확인
-    const findLimit = await this.goodsRepository.findOne({
-      where: { id: goodsId },
-      select: { bookingLimit: true },
+  ) {
+    this.redisClient = redisClient;
+    this.subscriber = new subRedis(); // 구독을 위해 별도의 클라이언트 생성
+    this.redlock = new Redlock([redisClient], {
+      driftFactor: 0.01, // clock drift를 보상하기 위해 driftTime 지정에 사용되는 요소, 해당 값과 아래 ttl값을 곱하여 사용.
+      retryCount: 10, // 에러 전까지 재시도 최대 횟수
+      retryDelay: 200, // 각 시도간의 간격
+      retryJitter: 200, // 재시도시 더해지는 되는 쵀대 시간(ms)
     });
 
-    // 3. Count의 갯수가 bookingLimit보다 많을 경우
-    if (count >= findLimit.bookingLimit)
-      throw new ConflictException({
-        errorMessage: '남은 좌석이 없습니다.',
-      });
+    this.subscriber.subscribe('Ticket');
+    this.subscriber.on('message', async (channel, message) => {
+      const data = JSON.parse(message);
+      try {
+        const result = await this.createBooking(data.goodsId, data.userId);
+        console.log(result);
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
 
-    // 4. 예매 진행
-    // 왜 save가 아닌 insert를 사용하였는가?
-    // save() 메서드는 값이 없으면 insert 기능을 하여 데이터를 저장하고 값이 존재하면 덮어쓴다.
-    // 그러고 저장된값을 select해서 리턴한다.
-    // insert() 메서드는 값이 없으면 insert 기능을 하여 데이터를 저장하고 값이 존재하면 duplicate 오류를 발생시킨다.
-    await this.bookingRepository.insert({
+  async publish(goodsId, userId) {
+    const channel = 'Ticket';
+    const reservationData = {
       goodsId,
       userId,
-    });
+    };
+    await this.redisClient.publish(channel, JSON.stringify(reservationData));
+  }
 
-    // 5. 성공한 경우 Success:true
-    return { Success: true };
+  async createBooking(goodsId: number, userId: number) {
+    const lockResource = [`goodsId:${goodsId}:lock`]; // 락을 식별하는 고유 문자열
+    const lock = await this.redlock.acquire(lockResource, 2000); // 2초 뒤에 자동 잠금해제
+    let status;
+    try {
+      const bookingData = await this.goodsRepository.findOne({
+        where: { id: goodsId },
+        select: { bookingLimit: true },
+      });
+      const bookingLimit = bookingData.bookingLimit; // 예약 한도(postgreSQL)
+      const bookingCount = await this.getBookingCount(goodsId); // 예약 총 갯수(레디스로부터)
+      console.log('bookingCount:', bookingCount);
+      console.log('bookingLimit:', bookingLimit);
+      if (bookingCount < bookingLimit) {
+        // 레디스에서 예약 수를 증가시킴.
+        await this.redisClient.incr(`goodsId:${goodsId}`);
+        await this.bookingRepository.insert({
+          goodsId,
+          userId,
+        });
+        // await this.bookingRepository.save(booking); // 트랜잭션은 save에서 발생.
+        status = { success: true };
+      } else {
+        await this.redisClient.lpush(`waitlist:${goodsId}`, userId);
+        status = { success: false, message: '예약 초과' };
+      }
+      await lock.unlock();
+      return status;
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  // 레디스의 해당 goodsId의 누적 총 갯수를 가져옴
+  async getBookingCount(goodsId: number): Promise<number> {
+    const count = await this.redisClient.get(`goodsId:${goodsId}`);
+    return +count;
   }
 
   async deleteBooking(goodsId: number, userId: number) {

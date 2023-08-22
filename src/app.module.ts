@@ -8,6 +8,7 @@ import { typeORMConfig } from './config/orm.config';
 import { GoodsModule } from './goods/goods.module';
 import { LoggingMiddleware } from './middlewares/logging.middleware';
 import { BookingModule } from './booking/booking.module';
+import { RedisModule } from './redis/redis.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { BookingModule } from './booking/booking.module';
       imports: [ConfigModule],
       useClass: typeORMConfig,
     }),
+    RedisModule,
   ],
   controllers: [AppController],
   providers: [AppService],

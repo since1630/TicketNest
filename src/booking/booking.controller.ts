@@ -30,8 +30,11 @@ export class BookingController {
     @Req() req,
     @Res() res: Response,
   ) {
-    const userId = req.user; // 객체안에 user키의 값을 담아줌
-    await this.bookingService.createBooking(goodsId, userId);
+    const userId: number = req.user; // 객체안에 user키의 값을 담아줌
+    console.log(userId);
+    // await this.bookingService.createBooking(goodsId, userId);
+    await this.bookingService.publish(goodsId, userId);
+
     return res.status(201).json({ message: '공연 예약 완료!' });
   }
 
