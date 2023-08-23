@@ -41,10 +41,19 @@ export class BookingService {
     );
     let bookingLimit: number;
     if (!cachedBookingLimit) {
-      const findLimit = await this.goodsRepository.findOne({
-        where: { id: goodsId },
-        select: { bookingLimit: true },
-      });
+      //! 기존 쿼리
+      // const findLimit = await this.goodsRepository.findOne({
+      //   where: { id: goodsId },
+      //   select: { bookingLimit: true },
+      // });
+
+      //! 쿼리 빌더 적용
+      const findLimit = await this.goodsRepository
+        .createQueryBuilder('goods')
+        .select('goods.bookingLimit')
+        .where('goods.id = :id', { id: goodsId })
+        .getOne();
+
       await this.redisClient.set(
         `bookingLimitOfGoodsId:${goodsId}`,
         findLimit.bookingLimit,
@@ -64,10 +73,24 @@ export class BookingService {
     // save() 메서드는 값이 없으면 insert 기능을 하여 데이터를 저장하고 값이 존재하면 덮어쓴다.
     // 그러고 저장된값을 select해서 리턴한다.
     // insert() 메서드는 값이 없으면 insert 기능을 하여 데이터를 저장하고 값이 존재하면 duplicate 오류를 발생시킨다.
-    await this.bookingRepository.insert({
-      goodsId,
-      userId,
-    });
+
+    // //! 기존 insert 쿼리
+    // await this.bookingRepository.insert({
+    //   goodsId,
+    //   userId,
+    // });
+
+    //! insert 쿼리 빌더 적용
+    await this.bookingRepository
+      .createQueryBuilder('booking')
+      .insert()
+      .into(BookingEntity)
+      .values({
+        goodsId,
+        userId,
+      })
+      .execute();
+
     await this.redisClient.incr(`goodsId:${goodsId}`);
 
     // 5. 성공한 경우 Success:true
