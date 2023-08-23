@@ -28,9 +28,16 @@ export class BookingService {
     const cachedAccCount = await this.redisClient.get(`goodsId:${goodsId}`);
     let accCount: number;
     if (!cachedAccCount) {
-      accCount = await this.bookingRepository.countBy({
-        goodsId,
-      }); // count를 레디스에 저장.
+      //! 기존 쿼리
+      // accCount = await this.bookingRepository.countBy({
+      //   goodsId,
+      // }); // count를 레디스에 저장.
+
+      //! 쿼리 빌더로 goodsId 에 해당하는 booking 총 갯수
+      await this.bookingRepository
+        .createQueryBuilder('booking')
+        .where('booking.goodsId = :goodsId', { goodsId })
+        .getCount();
     } else {
       accCount = +cachedAccCount;
     }
@@ -98,10 +105,20 @@ export class BookingService {
   }
 
   async deleteBooking(goodsId: number, userId: number) {
-    const deleteBooking = await this.bookingRepository.delete({
-      userId,
-      goodsId,
-    });
+    //! 기존 쿼리
+    // const deleteBooking = await this.bookingRepository.delete({
+    //   userId,
+    //   goodsId,
+    // });
+
+    //! 쿼리 빌더를 적용
+    const deleteBooking = await this.bookingRepository
+      .createQueryBuilder()
+      .delete()
+      .from('booking_entity')
+      .where('userId = :userId', { userId })
+      .andWhere('goodsId = :goodsId', { goodsId })
+      .execute();
 
     if (!deleteBooking)
       throw new NotFoundException({
