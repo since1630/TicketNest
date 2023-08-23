@@ -27,7 +27,7 @@ export class BookingService {
   ) {
     this.redisClient = redisClient;
     this.subscriber = new subRedis(); // 구독을 위해 별도의 클라이언트 생성
-    this.redlock = new Redlock([redisClient], {
+    this.redlock = new Redlock([redisClient as any], {
       driftFactor: 0.01, // clock drift를 보상하기 위해 driftTime 지정에 사용되는 요소, 해당 값과 아래 ttl값을 곱하여 사용.
       retryCount: 10, // 에러 전까지 재시도 최대 횟수
       retryDelay: 200, // 각 시도간의 간격
