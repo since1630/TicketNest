@@ -11,11 +11,13 @@ import { GoodsEntity } from '../goods/entities/goods.entity';
 import * as apm from 'elastic-apm-node';
 import Redis from 'ioredis';
 import Redlock from 'redlock';
+import { Cluster } from 'ioredis';
 
 @Injectable()
 export class BookingService {
   private redisClient: Redis;
   private redlock: Redlock;
+  private cluster: Cluster;
   constructor(
     @InjectRepository(BookingEntity)
     private bookingRepository: Repository<BookingEntity>,
@@ -25,11 +27,15 @@ export class BookingService {
     @Inject('REDIS_CLIENT') redisClient: Redis,
   ) {
     this.redisClient = redisClient;
-    this.redlock = new Redlock([redisClient], {
+    this.cluster = new Cluster([
+      { host: '54.232.23.11', port: 6030 },
+      { host: '23.132.23.15', port: 6031 },
+    ]);
+    this.redlock = new Redlock([this.cluster], {
       driftFactor: 0.01, // clock drift를 보상하기 위해 driftTime 지정에 사용되는 요소, 해당 값과 아래 ttl값을 곱하여 사용.
-      retryCount: 10, // 에러 전까지 재시도 최대 횟수
-      retryDelay: 200, // 각 시도간의 간격
-      retryJitter: 200, // 재시도시 더해지는 되는 무작위 시간(ms)
+      retryCount: 20, // 에러 전까지 재시도 최대 횟수
+      retryDelay: 300, // 각 시도간의 간격
+      retryJitter: 300, // 재시도시 더해지는 되는 무작위 시간(ms)
     });
   }
   async createBooking(goodsId: number, userId: number) {
@@ -38,7 +44,7 @@ export class BookingService {
     await queryRunner.connect();
     await queryRunner.startTransaction('READ COMMITTED');
     const lockResource = [`goodsId:${goodsId}:lock`]; // 락을 식별하는 고유 문자열
-    const lock = await this.redlock.acquire(lockResource, 2000); // 2초 뒤에 자동 잠금해제
+    const lock = await this.redlock.acquire(lockResource, 1000); // 2초 뒤에 자동 잠금해제
 
     const qb = queryRunner.manager.createQueryBuilder();
     try {
@@ -87,6 +93,8 @@ export class BookingService {
         // throw new ConflictException({
         //   errorMessage: '남은 좌석이 없습니다.',
         // });
+
+        // 레디스에 대기자 명단 생성
         await this.redisClient.lpush(`waitlist:${goodsId}`, userId);
         return { message: '예매가 초과되어 대기자 명단에 등록 되었습니다' };
       }
