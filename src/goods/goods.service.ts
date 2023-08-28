@@ -1,18 +1,29 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { GoodsEntity } from './entities/goods.entity';
 import { GoodsDto, updateGoodsDto } from './dto/goods.dto';
+import Redis from 'ioredis';
 
 @Injectable()
 export class GoodsService {
+  private redisClient: Redis;
   constructor(
     @InjectRepository(GoodsEntity)
     private goodsRepository: Repository<GoodsEntity>,
-  ) {}
+    @Inject('REDIS_CLIENT') redisClient: Redis,
+  ) {
+    this.redisClient = redisClient;
+  }
 
   async findAll(): Promise<GoodsEntity[]> {
-    return await this.goodsRepository.find();
+    const cachedAllGoods = await this.redisClient.get('goods');
+    if (cachedAllGoods) {
+      return JSON.parse(cachedAllGoods);
+    }
+    const allGoods = await this.goodsRepository.find();
+    await this.redisClient.set('goods', JSON.stringify(allGoods));
+    return allGoods;
   }
 
   async findOne(goodsid: number): Promise<GoodsEntity> {
