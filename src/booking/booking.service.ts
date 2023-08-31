@@ -74,7 +74,7 @@ export class BookingService {
 
       // 2. 예매 limit보다 많을 경우, Error 처리 진행
       if (bookingCount >= bookingLimit) {
-        //! throw 에러 처리를 하면 부하 테스트 단계에서 에러가 나서 일단 주석처리
+        //! throw 에러 처리를 하면 부하 테스트 단계에서 에러가 나서 주석처리
         // throw new ConflictException({
         //   errorMessage: '남은 좌석이 없습니다.',
         // });
@@ -84,8 +84,6 @@ export class BookingService {
         );
         return { message: '예매가 초과되어 대기자 명단에 등록 되었습니다' };
       }
-
-      console.log('booking:', booking);
 
       //Booking insert ms 측정
       const bookingSaveSpan = apm.startSpan('bookingSaveSpan');
@@ -105,14 +103,6 @@ export class BookingService {
       const newCachedBookingCount = await this.redisClient.get(
         `goodsId:${booking.goodsId}`,
       );
-      //   if (newCachedBookingCount <= cachedBookingLimit) {
-      //     this.bookingGateway.passOrderCountToQueue(
-      //       booking.userId,
-      //       +newCachedBookingCount,
-      //     );
-      //   } else{
-      //     this.bookingGateway.passOrderCountToQueue()
-      //   }
 
       newCachedBookingCount <= cachedBookingLimit
         ? this.bookingGateway.passOrderCountToQueue(
@@ -121,11 +111,9 @@ export class BookingService {
           )
         : this.bookingGateway.passOrderCountToQueue(booking.userId, 0);
 
-      console.log('cachedBookingCount:', cachedBookingCount);
-
       //   bookingSaveSpan.end();
       trans.end();
-      return { message: '싸비스' };
+      return { message: '예매 완료' };
     } catch (err) {
       console.error(err);
     }
